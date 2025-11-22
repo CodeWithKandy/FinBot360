@@ -58,7 +58,8 @@ def _set_cached_data(ticker: str, data: Any, data_type: str = "info"):
 
 def get_ticker_info(ticker: str, max_retries: int = 3) -> Optional[Dict]:
     """
-    Get ticker info with rate limiting, caching, and retry logic
+    Get ticker info with rate limiting, caching, and retry logic.
+    Falls back to history data if info fails.
     
     Args:
         ticker: Stock ticker symbol
@@ -80,12 +81,56 @@ def get_ticker_info(ticker: str, max_retries: int = 3) -> Optional[Dict]:
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            # Check if we got valid data
+            # Check if we got valid data - be more lenient with validation
             if info and isinstance(info, dict) and len(info) > 0:
-                _set_cached_data(ticker, info, "info")
-                return info
+                # Try to get price from multiple possible keys
+                price_keys = ['currentPrice', 'regularMarketPrice', 'previousClose', 'regularMarketPreviousClose', 'ask', 'bid']
+                has_price = any(info.get(key) is not None for key in price_keys)
+                
+                # If no price in info, try to get it from history as fallback
+                if not has_price:
+                    try:
+                        hist = stock.history(period="1d", interval="1m")
+                        if not hist.empty:
+                            latest_price = float(hist['Close'].iloc[-1])
+                            info['currentPrice'] = latest_price
+                            info['regularMarketPrice'] = latest_price
+                            if len(hist) > 1:
+                                info['previousClose'] = float(hist['Close'].iloc[-2])
+                            has_price = True
+                    except Exception as hist_error:
+                        logger.debug(f"Could not get price from history for {ticker}: {hist_error}")
+                
+                # Accept info if it has any useful data (name, symbol, or price)
+                if has_price or info.get('longName') or info.get('shortName') or info.get('symbol'):
+                    _set_cached_data(ticker, info, "info")
+                    return info
+                else:
+                    logger.warning(f"Info for {ticker} exists but has no useful data")
+                    # Still return it, let the UI handle it
+                    _set_cached_data(ticker, info, "info")
+                    return info
             else:
-                logger.warning(f"Empty or invalid info for {ticker}")
+                # If info is empty, try to get basic data from history
+                logger.warning(f"Empty info for {ticker}, trying history fallback")
+                try:
+                    hist = stock.history(period="5d", interval="1d")
+                    if not hist.empty:
+                        latest_price = float(hist['Close'].iloc[-1])
+                        prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else latest_price
+                        # Create a minimal info dict from history
+                        fallback_info = {
+                            'currentPrice': latest_price,
+                            'regularMarketPrice': latest_price,
+                            'previousClose': prev_close,
+                            'symbol': ticker,
+                            'longName': ticker
+                        }
+                        _set_cached_data(ticker, fallback_info, "info")
+                        return fallback_info
+                except Exception as hist_error:
+                    logger.debug(f"History fallback also failed for {ticker}: {hist_error}")
+                
                 return None
                 
         except Exception as e:

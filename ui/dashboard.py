@@ -120,10 +120,34 @@ if page == "Market Analysis":
             with st.spinner(f"Fetching data for {ticker}..."):
                 info = get_ticker_info(ticker)
             
-            # Check if info is empty or invalid
-            if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
+            # Check if info is empty or invalid - check multiple price keys
+            price_keys = ['currentPrice', 'regularMarketPrice', 'previousClose', 'regularMarketPreviousClose', 'ask', 'bid']
+            has_price = info and any(info.get(key) is not None for key in price_keys)
+            
+            if not info:
                 st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
-            else:
+            elif not has_price:
+                # Info exists but no price - try to get from history
+                st.info("ℹ️ Fetching price from historical data...")
+                try:
+                    from utils.yfinance_helper import get_ticker_history
+                    hist = get_ticker_history(ticker, period="1d", interval="1m")
+                    if not hist.empty:
+                        latest_price = float(hist['Close'].iloc[-1])
+                        prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else latest_price
+                        # Update info with price from history
+                        info['currentPrice'] = latest_price
+                        info['regularMarketPrice'] = latest_price
+                        info['previousClose'] = prev_close
+                        has_price = True
+                except Exception:
+                    pass
+                
+                if not has_price:
+                    st.warning(f"⚠️ Could not fetch price data for '{ticker}'. Trying to show charts anyway...")
+            
+            # Display Key Metrics if we have price data
+            if info and has_price:
                 # Display Key Metrics
                 m1, m2, m3, m4 = st.columns(4)
                 current_price = info.get('currentPrice') or info.get('regularMarketPrice')
@@ -141,9 +165,12 @@ if page == "Market Analysis":
                 
                 high_52 = info.get('fiftyTwoWeekHigh')
                 m4.metric("52W High", f"${high_52:,.2f}" if high_52 else "N/A")
-
-                # Technical Analysis Tabs
-                tab1, tab2 = st.tabs(["Technical Chart", "News"])
+            elif info:
+                # Show basic info even without price
+                st.info(f"📊 Found data for {ticker}, but price information is limited. Showing charts below...")
+            
+            # Technical Analysis Tabs (always show)
+            tab1, tab2 = st.tabs(["Technical Chart", "News"])
                 
                 with tab1:
                     period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
