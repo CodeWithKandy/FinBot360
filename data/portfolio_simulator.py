@@ -1,5 +1,6 @@
-import yfinance as yf
 import pandas as pd
+from utils.yfinance_helper import get_ticker_history
+import time
 
 def calculate_portfolio_value(holdings):
     portfolio = []
@@ -13,12 +14,14 @@ def calculate_portfolio_value(holdings):
         buy_price = item['buy_price']
         
         try:
-            stock = yf.Ticker(ticker)
-            # Fetch 2 days of data to calculate daily change
-            hist = stock.history(period="5d") # Fetch a bit more to be safe
+            # Use rate-limited helper to avoid 429 errors
+            hist = get_ticker_history(ticker, period="5d", interval="1d")
 
             if hist.empty or "Close" not in hist:
                 raise ValueError("No closing data.")
+            
+            # Add small delay between multiple tickers to avoid rate limiting
+            time.sleep(0.5)
 
             latest_price = float(hist["Close"].iloc[-1])
             prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else latest_price

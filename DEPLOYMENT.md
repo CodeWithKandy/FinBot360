@@ -21,8 +21,13 @@ Since you have a `.gitignore` file ready, you can push your code to GitHub.
 1.  Go to [share.streamlit.io](https://share.streamlit.io/).
 2.  Log in with GitHub.
 3.  Click **"New app"**.
-4.  Select your repository, branch (`main`), and main file path: `ui/dashboard.py` (or `main.py` if you adjust the entry point, but pointing directly to `ui/dashboard.py` is often easier for Streamlit Cloud).
+4.  Fill in the deployment form:
+   - **Repository**: `CodeWithKandy/FinBot360` (or your fork)
+   - **Branch**: `main`
+   - **Main file path**: `ui/dashboard.py` ⭐ **This is the file you need to specify!**
 5.  Click **"Deploy!"**.
+
+**Important**: Always use `ui/dashboard.py` as the main file path. This is the actual Streamlit application file. Do NOT use `main.py` as it's just a wrapper script.
 
 ## Dependencies
 Ensure `requirements.txt` is up to date. It should include:

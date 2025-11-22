@@ -253,6 +253,16 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Check that port 8501 is not in use
 - Verify yfinance is working: `python test_yfinance.py`
 
+### Getting "429 Too Many Requests" error?
+- **This is a rate limiting issue from Yahoo Finance API**
+- The app now includes automatic rate limiting, caching, and retry logic
+- Data is cached for 60 seconds to reduce API calls
+- If you see this error:
+  1. Wait 1-2 minutes before trying again
+  2. The app will automatically retry with exponential backoff
+  3. Try searching different tickers instead of repeatedly searching the same one
+  4. The cache helps - if you just searched a ticker, wait before searching it again
+
 ### Import errors?
 - Make sure you're in the project root directory
 - Activate your virtual environment

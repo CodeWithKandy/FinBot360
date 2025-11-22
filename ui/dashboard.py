@@ -15,6 +15,7 @@ from data.fetch_news import get_finance_news
 from data.portfolio_simulator import calculate_portfolio_value
 from data.historical_charts import get_historical_data
 from data.parser import parse_holdings
+from utils.yfinance_helper import get_ticker_info, get_ticker_history
 
 # Page Config
 st.set_page_config(page_title="FinBot360 Pro", page_icon="📈", layout="wide")
@@ -115,13 +116,13 @@ if page == "Market Analysis":
         
     if ticker:
         try:
-            # Fetch Fundamental Data
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            # Fetch Fundamental Data with rate limiting and error handling
+            with st.spinner(f"Fetching data for {ticker}..."):
+                info = get_ticker_info(ticker)
             
-            # Check if info is empty or invalid (yfinance sometimes returns empty dict for invalid tickers)
-            if not info or 'regularMarketPrice' not in info and 'currentPrice' not in info:
-                 st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol.")
+            # Check if info is empty or invalid
+            if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
+                st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
             else:
                 # Display Key Metrics
                 m1, m2, m3, m4 = st.columns(4)
@@ -198,7 +199,12 @@ if page == "Market Analysis":
                     else:
                         st.info("No recent news found.")
         except Exception as e:
-            st.error(f"🚨 Error fetching data: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "Too Many Requests" in error_msg:
+                st.error("🚨 Rate limit exceeded. Please wait a moment and try again. The app is caching data to reduce API calls.")
+                st.info("💡 **Tip**: Data is cached for 60 seconds. If you just searched this ticker, wait a moment before searching again.")
+            else:
+                st.error(f"🚨 Error fetching data: {e}")
 
 elif page == "Portfolio Tracker":
     st.title("💼 Portfolio Tracker & Growth")

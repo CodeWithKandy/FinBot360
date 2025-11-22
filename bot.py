@@ -2,8 +2,8 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import yfinance as yf
 from pycoingecko import CoinGeckoAPI
+from utils.yfinance_helper import get_ticker_history
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
@@ -23,11 +23,16 @@ cg = CoinGeckoAPI()
 
 def get_stock_price(symbol: str):
     try:
-        data = yf.Ticker(symbol).history(period="1d", interval="1m")
+        # Use rate-limited helper to avoid 429 errors
+        data = get_ticker_history(symbol, period="1d", interval="1m")
         if not data.empty:
             return float(data['Close'].iloc[-1])
     except Exception as e:
-        logger.error(f"Error fetching stock price for {symbol}: {e}")
+        error_str = str(e)
+        if "429" in error_str or "Too Many Requests" in error_str:
+            logger.warning(f"Rate limited for {symbol}. Will retry on next cycle.")
+        else:
+            logger.error(f"Error fetching stock price for {symbol}: {e}")
     return None
 
 def get_crypto_price(symbol: str):
