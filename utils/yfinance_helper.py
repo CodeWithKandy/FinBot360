@@ -33,16 +33,28 @@ def _rate_limit():
     _last_request_time = time.time()
 
 
-def _get_cached_data(ticker: str, data_type: str = "info"):
-    """Get cached data if available and not expired"""
+def _get_cached_data(ticker: str, data_type: str = "info", allow_expired: bool = False):
+    """Get cached data if available and not expired
+    
+    Args:
+        ticker: Ticker symbol
+        data_type: Type of data (info, history, etc.)
+        allow_expired: If True, return cached data even if expired (for fallback)
+    """
     cache_key = f"{ticker}_{data_type}"
     
     if cache_key in _cache:
         timestamp = _cache_timestamps.get(cache_key, 0)
-        if time.time() - timestamp < CACHE_DURATION:
+        age = time.time() - timestamp
+        is_expired = age >= CACHE_DURATION
+        
+        if not is_expired or allow_expired:
             cached_value = _cache[cache_key]
             # Don't return None or empty values from cache - force refresh
             if cached_value is not None:
+                if is_expired and allow_expired:
+                    # Mark as expired but still return it
+                    return cached_value
                 return cached_value
             else:
                 # Remove None from cache
@@ -228,4 +240,20 @@ def clear_cache():
     global _cache, _cache_timestamps
     _cache.clear()
     _cache_timestamps.clear()
+
+
+def get_cached_data(ticker: str, data_type: str = "info", allow_expired: bool = False):
+    """Get cached data (public function for accessing cache)
+    
+    Args:
+        ticker: Ticker symbol
+        data_type: Type of data
+        allow_expired: If True, return even expired cache
+    """
+    return _get_cached_data(ticker, data_type, allow_expired)
+
+
+def get_all_cache_keys():
+    """Get all cache keys (for debugging/fallback)"""
+    return list(_cache.keys())
 

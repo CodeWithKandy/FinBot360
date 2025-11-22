@@ -113,6 +113,12 @@ if page == "Market Analysis":
 
     with col1:
         ticker = st.text_input("Enter Ticker (Stock or Crypto, e.g., AAPL, BTC-USD):", "AAPL").upper()
+    
+    with col2:
+        if st.button("🔄 Force Refresh", help="Clear cache and retry fetching data"):
+            from utils.yfinance_helper import clear_cache
+            clear_cache()
+            st.rerun()
         
     if ticker:
         try:
@@ -164,13 +170,22 @@ if page == "Market Analysis":
                     except Exception as e:
                         st.error(f"Error processing data: {str(e)[:100]}")
                 else:
-                    st.warning(f"⚠️ Could not fetch data for '{ticker}'. This may be due to rate limiting.")
+                    # Check if we have any cached data to show (even if expired)
+                    from utils.yfinance_helper import get_cached_data
+                    cached_info = get_cached_data(ticker, "info", allow_expired=True)
+                    if cached_info:
+                        st.warning("⚠️ Using cached data (may be outdated)")
+                        info = cached_info
+                        has_price = any(info.get(key) is not None for key in price_keys)
+                    else:
+                        st.warning(f"⚠️ Could not fetch data for '{ticker}'. This may be due to rate limiting.")
+                    
                     st.info("""
                     **💡 Troubleshooting Tips:**
-                    - Wait 2-3 minutes before trying again
-                    - Yahoo Finance may be temporarily rate limiting requests
+                    - Click "🔄 Force Refresh" button above to clear cache and retry
+                    - Wait 3-5 minutes before trying again (Yahoo Finance rate limits)
                     - Try a different ticker symbol
-                    - The app will automatically retry with exponential backoff
+                    - Charts below may still work with historical data
                     """)
             elif not has_price:
                 # Info exists but no price - try to get from history
@@ -214,18 +229,18 @@ if page == "Market Analysis":
             elif info:
                 # Show basic info even without price
                 st.info(f"📊 Found data for {ticker}, but price information is limited. Showing charts below...")
-            
+
             # Technical Analysis Tabs (always show)
-            tab1, tab2 = st.tabs(["Technical Chart", "News"])
-            
-            with tab1:
-                period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
+                tab1, tab2 = st.tabs(["Technical Chart", "News"])
                 
+                with tab1:
+                    period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
+                    
                 # Always try to fetch historical data, even if info failed
                 hist_data = pd.DataFrame()
                 with st.spinner(f"Loading {period} historical data..."):
                     try:
-                        hist_data = get_historical_data(ticker, period=period)
+                    hist_data = get_historical_data(ticker, period=period)
                     except Exception as e:
                         st.warning(f"First attempt failed: {str(e)[:100]}")
                 
@@ -259,63 +274,85 @@ if page == "Market Analysis":
                                 hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
                         except Exception as e2:
                             st.error(f"All methods failed. Error: {str(e2)[:150]}")
-                            st.info("💡 **Tip**: Wait 1-2 minutes and try again. Yahoo Finance may be rate limiting requests.")
-                
-                if not hist_data.empty:
-                    # Main Price Chart with SMA
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
+                            # Try to show cached historical data if available
+                            try:
+                                from utils.yfinance_helper import get_cached_data, get_all_cache_keys
+                                import time
+                                # Try different cache keys for history
+                                for cache_type in [f"{ticker}_{period}_1d", f"{ticker}_5d_1d", f"{ticker}_1mo_1d"]:
+                                    cached_hist = get_cached_data(ticker, cache_type, allow_expired=True)
+                                    if cached_hist is not None and not cached_hist.empty:
+                                        st.info("📦 Loading from cache...")
+                                        hist_data = cached_hist.copy()
+                                        # Add indicators if not present
+                                        if 'SMA_20' not in hist_data.columns:
+                                            import pandas_ta as ta
+                                            hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
+                                            hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
+                                            hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
+                                        st.success("✅ Showing cached historical data")
+                                        break
+                            except Exception as cache_error:
+                                pass
+                            
+                            if hist_data.empty:
+                                st.info("💡 **Tip**: Wait 3-5 minutes and click '🔄 Force Refresh' button. Yahoo Finance may be rate limiting requests.")
                     
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        if st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends."):
-                            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
-                    with c2:
-                        if st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends."):
-                            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
-                    
-                    fig.update_layout(
-                        title=f"{ticker} Price Analysis",
-                        xaxis_title="Date",
-                        yaxis_title="Price",
-                        hovermode="x unified"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # RSI Chart
-                    with c3:
-                        show_rsi = st.checkbox("Show RSI", help="Relative Strength Index. >70 is Overbought, <30 is Oversold.")
-                    
-                    if show_rsi:
-                        fig_rsi = go.Figure()
-                        fig_rsi.add_trace(go.Scatter(x=hist_data.index, y=hist_data['RSI'], mode='lines', name='RSI', line=dict(color='#A371F7')))
-                        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
-                        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
-                        fig_rsi.update_layout(
-                            title="Relative Strength Index (RSI)",
-                            yaxis_title="RSI",
-                            height=300,
+                    if not hist_data.empty:
+                        # Main Price Chart with SMA
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
+                        
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            if st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends."):
+                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
+                        with c2:
+                            if st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends."):
+                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
+                        
+                        fig.update_layout(
+                            title=f"{ticker} Price Analysis",
+                            xaxis_title="Date",
+                            yaxis_title="Price",
                             hovermode="x unified"
                         )
-                        st.plotly_chart(fig_rsi, use_container_width=True)
-                else:
-                    st.warning("No historical data available.")
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # RSI Chart
+                        with c3:
+                            show_rsi = st.checkbox("Show RSI", help="Relative Strength Index. >70 is Overbought, <30 is Oversold.")
+                        
+                        if show_rsi:
+                            fig_rsi = go.Figure()
+                            fig_rsi.add_trace(go.Scatter(x=hist_data.index, y=hist_data['RSI'], mode='lines', name='RSI', line=dict(color='#A371F7')))
+                            fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+                            fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
+                            fig_rsi.update_layout(
+                                title="Relative Strength Index (RSI)",
+                                yaxis_title="RSI",
+                                height=300,
+                                hovermode="x unified"
+                            )
+                            st.plotly_chart(fig_rsi, use_container_width=True)
+                    else:
+                        st.warning("No historical data available.")
 
-            with tab2:
-                st.subheader(f"🗞️ Latest News for {ticker}")
-                news = get_finance_news(ticker)
-                if news:
-                    for title, link in news:
-                        st.markdown(f"• [{title}]({link})")
-                else:
-                    st.info("No recent news found.")
+                with tab2:
+                    st.subheader(f"🗞️ Latest News for {ticker}")
+                    news = get_finance_news(ticker)
+                    if news:
+                        for title, link in news:
+                            st.markdown(f"• [{title}]({link})")
+                    else:
+                        st.info("No recent news found.")
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "Too Many Requests" in error_msg:
                 st.error("🚨 Rate limit exceeded. Please wait a moment and try again. The app is caching data to reduce API calls.")
                 st.info("💡 **Tip**: Data is cached for 60 seconds. If you just searched this ticker, wait a moment before searching again.")
             else:
-                st.error(f"🚨 Error fetching data: {e}")
+            st.error(f"🚨 Error fetching data: {e}")
 
 elif page == "Portfolio Tracker":
     st.title("💼 Portfolio Tracker & Growth")
