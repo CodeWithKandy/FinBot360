@@ -171,60 +171,60 @@ if page == "Market Analysis":
             
             # Technical Analysis Tabs (always show)
             tab1, tab2 = st.tabs(["Technical Chart", "News"])
+            
+            with tab1:
+                period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
                 
-                with tab1:
-                    period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
+                hist_data = get_historical_data(ticker, period=period)
+                
+                if not hist_data.empty:
+                    # Main Price Chart with SMA
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
                     
-                    hist_data = get_historical_data(ticker, period=period)
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        if st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends."):
+                            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
+                    with c2:
+                        if st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends."):
+                            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
                     
-                    if not hist_data.empty:
-                        # Main Price Chart with SMA
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
-                        
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            if st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends."):
-                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
-                        with c2:
-                            if st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends."):
-                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
-                        
-                        fig.update_layout(
-                            title=f"{ticker} Price Analysis",
-                            xaxis_title="Date",
-                            yaxis_title="Price",
+                    fig.update_layout(
+                        title=f"{ticker} Price Analysis",
+                        xaxis_title="Date",
+                        yaxis_title="Price",
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # RSI Chart
+                    with c3:
+                        show_rsi = st.checkbox("Show RSI", help="Relative Strength Index. >70 is Overbought, <30 is Oversold.")
+                    
+                    if show_rsi:
+                        fig_rsi = go.Figure()
+                        fig_rsi.add_trace(go.Scatter(x=hist_data.index, y=hist_data['RSI'], mode='lines', name='RSI', line=dict(color='#A371F7')))
+                        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+                        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
+                        fig_rsi.update_layout(
+                            title="Relative Strength Index (RSI)",
+                            yaxis_title="RSI",
+                            height=300,
                             hovermode="x unified"
                         )
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # RSI Chart
-                        with c3:
-                            show_rsi = st.checkbox("Show RSI", help="Relative Strength Index. >70 is Overbought, <30 is Oversold.")
-                        
-                        if show_rsi:
-                            fig_rsi = go.Figure()
-                            fig_rsi.add_trace(go.Scatter(x=hist_data.index, y=hist_data['RSI'], mode='lines', name='RSI', line=dict(color='#A371F7')))
-                            fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
-                            fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
-                            fig_rsi.update_layout(
-                                title="Relative Strength Index (RSI)",
-                                yaxis_title="RSI",
-                                height=300,
-                                hovermode="x unified"
-                            )
-                            st.plotly_chart(fig_rsi, use_container_width=True)
-                    else:
-                        st.warning("No historical data available.")
+                        st.plotly_chart(fig_rsi, use_container_width=True)
+                else:
+                    st.warning("No historical data available.")
 
-                with tab2:
-                    st.subheader(f"🗞️ Latest News for {ticker}")
-                    news = get_finance_news(ticker)
-                    if news:
-                        for title, link in news:
-                            st.markdown(f"• [{title}]({link})")
-                    else:
-                        st.info("No recent news found.")
+            with tab2:
+                st.subheader(f"🗞️ Latest News for {ticker}")
+                news = get_finance_news(ticker)
+                if news:
+                    for title, link in news:
+                        st.markdown(f"• [{title}]({link})")
+                else:
+                    st.info("No recent news found.")
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "Too Many Requests" in error_msg:
