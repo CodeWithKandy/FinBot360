@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 # Cache for storing recent API calls to reduce rate limiting
 _cache = {}
 _cache_timestamps = {}
-CACHE_DURATION = 60  # Cache data for 60 seconds
+CACHE_DURATION = 30  # Cache data for 30 seconds (reduced to allow more frequent updates)
 
 # Rate limiting
 _last_request_time = 0
-MIN_REQUEST_INTERVAL = 0.5  # Minimum 0.5 seconds between requests
+MIN_REQUEST_INTERVAL = 1.0  # Minimum 1 second between requests (increased to avoid rate limits)
 
 
 def _rate_limit():
@@ -40,7 +40,14 @@ def _get_cached_data(ticker: str, data_type: str = "info"):
     if cache_key in _cache:
         timestamp = _cache_timestamps.get(cache_key, 0)
         if time.time() - timestamp < CACHE_DURATION:
-            return _cache[cache_key]
+            cached_value = _cache[cache_key]
+            # Don't return None or empty values from cache - force refresh
+            if cached_value is not None:
+                return cached_value
+            else:
+                # Remove None from cache
+                del _cache[cache_key]
+                del _cache_timestamps[cache_key]
         else:
             # Cache expired, remove it
             del _cache[cache_key]
@@ -90,7 +97,8 @@ def get_ticker_info(ticker: str, max_retries: int = 3) -> Optional[Dict]:
                 # If no price in info, try to get it from history as fallback
                 if not has_price:
                     try:
-                        hist = stock.history(period="1d", interval="1m")
+                        # Use a longer period to get more reliable data
+                        hist = stock.history(period="5d", interval="1d")
                         if not hist.empty:
                             latest_price = float(hist['Close'].iloc[-1])
                             info['currentPrice'] = latest_price
@@ -98,6 +106,7 @@ def get_ticker_info(ticker: str, max_retries: int = 3) -> Optional[Dict]:
                             if len(hist) > 1:
                                 info['previousClose'] = float(hist['Close'].iloc[-2])
                             has_price = True
+                            logger.info(f"Got price from history for {ticker}: {latest_price}")
                     except Exception as hist_error:
                         logger.debug(f"Could not get price from history for {ticker}: {hist_error}")
                 
@@ -107,9 +116,8 @@ def get_ticker_info(ticker: str, max_retries: int = 3) -> Optional[Dict]:
                     return info
                 else:
                     logger.warning(f"Info for {ticker} exists but has no useful data")
-                    # Still return it, let the UI handle it
-                    _set_cached_data(ticker, info, "info")
-                    return info
+                    # Don't cache empty/invalid data - return None to force retry
+                    return None
             else:
                 # If info is empty, try to get basic data from history
                 logger.warning(f"Empty info for {ticker}, trying history fallback")

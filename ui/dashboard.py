@@ -117,6 +117,9 @@ if page == "Market Analysis":
     if ticker:
         try:
             # Fetch Fundamental Data with rate limiting and error handling
+            info = None
+            has_price = False
+            
             with st.spinner(f"Fetching data for {ticker}..."):
                 info = get_ticker_info(ticker)
             
@@ -125,7 +128,27 @@ if page == "Market Analysis":
             has_price = info and any(info.get(key) is not None for key in price_keys)
             
             if not info:
-                st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
+                # Try to get at least history data to show something
+                st.info("ℹ️ Trying to fetch historical data...")
+                try:
+                    from utils.yfinance_helper import get_ticker_history
+                    hist = get_ticker_history(ticker, period="5d", interval="1d")
+                    if not hist.empty:
+                        # Create minimal info from history
+                        latest_price = float(hist['Close'].iloc[-1])
+                        prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else latest_price
+                        info = {
+                            'currentPrice': latest_price,
+                            'regularMarketPrice': latest_price,
+                            'previousClose': prev_close,
+                            'symbol': ticker
+                        }
+                        has_price = True
+                        st.success("✅ Retrieved price data from historical records")
+                    else:
+                        st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
+                except Exception as hist_error:
+                    st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
             elif not has_price:
                 # Info exists but no price - try to get from history
                 st.info("ℹ️ Fetching price from historical data...")
@@ -175,7 +198,24 @@ if page == "Market Analysis":
             with tab1:
                 period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
                 
-                hist_data = get_historical_data(ticker, period=period)
+                # Always try to fetch historical data, even if info failed
+                with st.spinner(f"Loading {period} historical data..."):
+                    hist_data = get_historical_data(ticker, period=period)
+                
+                # If still empty, try a different approach
+                if hist_data.empty:
+                    st.info("Trying alternative data source...")
+                    try:
+                        from utils.yfinance_helper import get_ticker_history
+                        hist_data = get_ticker_history(ticker, period=period, interval="1d")
+                        if not hist_data.empty:
+                            # Add technical indicators
+                            import pandas_ta as ta
+                            hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
+                            hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
+                            hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
+                    except Exception as e:
+                        st.error(f"Could not load historical data: {str(e)[:100]}")
                 
                 if not hist_data.empty:
                     # Main Price Chart with SMA
