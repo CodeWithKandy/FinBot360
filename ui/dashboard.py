@@ -130,10 +130,26 @@ if page == "Market Analysis":
             if not info:
                 # Try to get at least history data to show something
                 st.info("ℹ️ Trying to fetch historical data...")
+                hist = None
                 try:
                     from utils.yfinance_helper import get_ticker_history
                     hist = get_ticker_history(ticker, period="5d", interval="1d")
-                    if not hist.empty:
+                except Exception as e1:
+                    st.warning(f"First attempt failed: {str(e1)[:100]}")
+                    # Try direct yfinance as last resort
+                    try:
+                        import yfinance as yf
+                        st.info("Trying direct yfinance download...")
+                        hist = yf.download(ticker, period="5d", interval="1d", progress=False)
+                        if not hist.empty and len(hist.columns) > 0:
+                            # Handle MultiIndex columns from download
+                            if isinstance(hist.columns, pd.MultiIndex):
+                                hist = hist.droplevel(0, axis=1)
+                    except Exception as e2:
+                        st.error(f"All methods failed. Last error: {str(e2)[:150]}")
+                
+                if hist is not None and not hist.empty:
+                    try:
                         # Create minimal info from history
                         latest_price = float(hist['Close'].iloc[-1])
                         prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else latest_price
@@ -145,10 +161,17 @@ if page == "Market Analysis":
                         }
                         has_price = True
                         st.success("✅ Retrieved price data from historical records")
-                    else:
-                        st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
-                except Exception as hist_error:
-                    st.warning(f"⚠️ Could not fetch data for '{ticker}'. Please check the symbol or try again in a moment (rate limit may apply).")
+                    except Exception as e:
+                        st.error(f"Error processing data: {str(e)[:100]}")
+                else:
+                    st.warning(f"⚠️ Could not fetch data for '{ticker}'. This may be due to rate limiting.")
+                    st.info("""
+                    **💡 Troubleshooting Tips:**
+                    - Wait 2-3 minutes before trying again
+                    - Yahoo Finance may be temporarily rate limiting requests
+                    - Try a different ticker symbol
+                    - The app will automatically retry with exponential backoff
+                    """)
             elif not has_price:
                 # Info exists but no price - try to get from history
                 st.info("ℹ️ Fetching price from historical data...")
@@ -199,8 +222,12 @@ if page == "Market Analysis":
                 period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
                 
                 # Always try to fetch historical data, even if info failed
+                hist_data = pd.DataFrame()
                 with st.spinner(f"Loading {period} historical data..."):
-                    hist_data = get_historical_data(ticker, period=period)
+                    try:
+                        hist_data = get_historical_data(ticker, period=period)
+                    except Exception as e:
+                        st.warning(f"First attempt failed: {str(e)[:100]}")
                 
                 # If still empty, try a different approach
                 if hist_data.empty:
@@ -214,8 +241,25 @@ if page == "Market Analysis":
                             hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
                             hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
                             hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
-                    except Exception as e:
-                        st.error(f"Could not load historical data: {str(e)[:100]}")
+                    except Exception as e1:
+                        st.warning(f"Helper method failed: {str(e1)[:100]}")
+                        # Last resort: direct yfinance download
+                        try:
+                            import yfinance as yf
+                            st.info("Trying direct yfinance download as last resort...")
+                            hist_data = yf.download(ticker, period=period, interval="1d", progress=False)
+                            if not hist_data.empty:
+                                # Handle MultiIndex columns
+                                if isinstance(hist_data.columns, pd.MultiIndex):
+                                    hist_data = hist_data.droplevel(0, axis=1)
+                                # Add technical indicators
+                                import pandas_ta as ta
+                                hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
+                                hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
+                                hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
+                        except Exception as e2:
+                            st.error(f"All methods failed. Error: {str(e2)[:150]}")
+                            st.info("💡 **Tip**: Wait 1-2 minutes and try again. Yahoo Finance may be rate limiting requests.")
                 
                 if not hist_data.empty:
                     # Main Price Chart with SMA

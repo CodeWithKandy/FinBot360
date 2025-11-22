@@ -17,7 +17,7 @@ CACHE_DURATION = 30  # Cache data for 30 seconds (reduced to allow more frequent
 
 # Rate limiting
 _last_request_time = 0
-MIN_REQUEST_INTERVAL = 1.0  # Minimum 1 second between requests (increased to avoid rate limits)
+MIN_REQUEST_INTERVAL = 2.0  # Minimum 2 seconds between requests (increased to avoid rate limits)
 
 
 def _rate_limit():
