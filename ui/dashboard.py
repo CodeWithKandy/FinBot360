@@ -231,16 +231,16 @@ if page == "Market Analysis":
                 st.info(f"📊 Found data for {ticker}, but price information is limited. Showing charts below...")
 
             # Technical Analysis Tabs (always show)
-                tab1, tab2 = st.tabs(["Technical Chart", "News"])
+            tab1, tab2 = st.tabs(["Technical Chart", "News"])
+            
+            with tab1:
+                period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
                 
-                with tab1:
-                    period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
-                    
                 # Always try to fetch historical data, even if info failed
                 hist_data = pd.DataFrame()
                 with st.spinner(f"Loading {period} historical data..."):
                     try:
-                    hist_data = get_historical_data(ticker, period=period)
+                        hist_data = get_historical_data(ticker, period=period)
                     except Exception as e:
                         st.warning(f"First attempt failed: {str(e)[:100]}")
                 
@@ -299,31 +299,56 @@ if page == "Market Analysis":
                                 st.info("💡 **Tip**: Wait 3-5 minutes and click '🔄 Force Refresh' button. Yahoo Finance may be rate limiting requests.")
                     
                     if not hist_data.empty:
-                        # Main Price Chart with SMA
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
+                        # Handle MultiIndex columns (common with yfinance)
+                        if isinstance(hist_data.columns, pd.MultiIndex):
+                            hist_data.columns = hist_data.columns.get_level_values(0)
                         
+                        # Ensure Close column exists and technical indicators exist
+                        if 'Close' not in hist_data.columns:
+                            st.error("❌ Data missing 'Close' column. Cannot display charts.")
+                        else:
+                            try:
+                                import pandas_ta as ta
+                                if 'SMA_20' not in hist_data.columns:
+                                    hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
+                                if 'SMA_50' not in hist_data.columns:
+                                    hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
+                                if 'RSI' not in hist_data.columns:
+                                    hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
+                            except Exception as e:
+                                st.warning(f"Could not calculate some technical indicators: {e}")
+
+                        # Controls for technical indicators
                         c1, c2, c3 = st.columns(3)
                         with c1:
-                            if st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends."):
-                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
+                            show_sma_20 = st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends.")
                         with c2:
-                            if st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends."):
-                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
-                        
-                        fig.update_layout(
-                            title=f"{ticker} Price Analysis",
-                            xaxis_title="Date",
-                            yaxis_title="Price",
-                            hovermode="x unified"
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # RSI Chart
+                            show_sma_50 = st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends.")
                         with c3:
                             show_rsi = st.checkbox("Show RSI", help="Relative Strength Index. >70 is Overbought, <30 is Oversold.")
                         
-                        if show_rsi:
+                        # Main Price Chart with SMA (only if Close column exists)
+                        if 'Close' in hist_data.columns:
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
+                            
+                            if show_sma_20 and 'SMA_20' in hist_data.columns:
+                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
+                            if show_sma_50 and 'SMA_50' in hist_data.columns:
+                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
+                            
+                            fig.update_layout(
+                                title=f"{ticker} Price Analysis",
+                                xaxis_title="Date",
+                                yaxis_title="Price",
+                                hovermode="x unified"
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.error("❌ Cannot display chart: Missing 'Close' price data.")
+                        
+                        # RSI Chart
+                        if show_rsi and 'RSI' in hist_data.columns:
                             fig_rsi = go.Figure()
                             fig_rsi.add_trace(go.Scatter(x=hist_data.index, y=hist_data['RSI'], mode='lines', name='RSI', line=dict(color='#A371F7')))
                             fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
@@ -352,7 +377,7 @@ if page == "Market Analysis":
                 st.error("🚨 Rate limit exceeded. Please wait a moment and try again. The app is caching data to reduce API calls.")
                 st.info("💡 **Tip**: Data is cached for 60 seconds. If you just searched this ticker, wait a moment before searching again.")
             else:
-            st.error(f"🚨 Error fetching data: {e}")
+                st.error(f"🚨 Error fetching data: {e}")
 
 elif page == "Portfolio Tracker":
     st.title("💼 Portfolio Tracker & Growth")
