@@ -177,7 +177,7 @@ def get_ticker_info(ticker: str, max_retries: int = 3) -> Optional[Dict]:
     return None
 
 
-def get_ticker_history(ticker: str, period: str = "5d", interval: str = "1d", max_retries: int = 3) -> pd.DataFrame:
+def get_ticker_history(ticker: str, period: str = "5d", interval: str = "1d", max_retries: int = 3, raise_on_error: bool = False) -> pd.DataFrame:
     """
     Get ticker historical data with rate limiting, caching, and retry logic
     
@@ -186,33 +186,53 @@ def get_ticker_history(ticker: str, period: str = "5d", interval: str = "1d", ma
         period: Period of data to fetch
         interval: Interval of data
         max_retries: Maximum number of retry attempts
+        raise_on_error: If True, raise exception on failure instead of returning empty DataFrame
         
     Returns:
-        DataFrame with historical data or empty DataFrame if failed
+        DataFrame with historical data or empty DataFrame if failed (unless raise_on_error=True)
     """
     # Check cache first
-    cache_key = f"{ticker}_{period}_{interval}"
-    cached_data = _get_cached_data(ticker, cache_key)
+    # Use period_interval as data_type (cache key will be f"{ticker}_{period}_{interval}")
+    cache_data_type = f"{period}_{interval}"
+    cached_data = _get_cached_data(ticker, cache_data_type)
     if cached_data is not None:
         return cached_data
     
     # Enforce rate limiting
     _rate_limit()
     
+    last_error = None
     for attempt in range(max_retries):
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period=period, interval=interval)
             
+            # Fallback to yf.download if history is empty
+            if hist.empty:
+                logger.warning(f"stock.history() empty for {ticker}, trying yf.download fallback")
+                hist = yf.download(ticker, period=period, interval=interval, progress=False)
+                
+                # Handle MultiIndex columns from download (common in new yfinance)
+                if isinstance(hist.columns, pd.MultiIndex):
+                    hist = hist.droplevel(0, axis=1)
+            
             if not hist.empty:
-                _set_cached_data(ticker, hist, cache_key)
+                # Ensure we have Close column
+                if 'Close' not in hist.columns:
+                    raise ValueError(f"History data for {ticker} missing 'Close' column")
+                _set_cached_data(ticker, hist, cache_data_type)
                 return hist
             else:
-                logger.warning(f"Empty history for {ticker}")
+                error_msg = f"Empty history returned for {ticker} (period={period}, interval={interval})"
+                logger.warning(error_msg)
+                last_error = ValueError(error_msg)
+                if raise_on_error:
+                    raise last_error
                 return pd.DataFrame()
                 
         except Exception as e:
             error_str = str(e)
+            last_error = e
             
             # Handle rate limiting (429 error)
             if "429" in error_str or "Too Many Requests" in error_str:
@@ -222,7 +242,10 @@ def get_ticker_history(ticker: str, period: str = "5d", interval: str = "1d", ma
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.error(f"Rate limited for {ticker} history after {max_retries} attempts")
+                    error_msg = f"Rate limited for {ticker} history after {max_retries} attempts"
+                    logger.error(error_msg)
+                    if raise_on_error:
+                        raise Exception(error_msg) from e
                     return pd.DataFrame()
             
             # Handle other errors
@@ -230,8 +253,13 @@ def get_ticker_history(ticker: str, period: str = "5d", interval: str = "1d", ma
             if attempt < max_retries - 1:
                 time.sleep(1)
             else:
+                if raise_on_error:
+                    raise Exception(f"Failed to fetch history for {ticker} after {max_retries} attempts: {e}") from e
                 return pd.DataFrame()
     
+    # If we get here, all retries failed
+    if raise_on_error and last_error:
+        raise Exception(f"Failed to fetch history for {ticker} after {max_retries} attempts") from last_error
     return pd.DataFrame()
 
 

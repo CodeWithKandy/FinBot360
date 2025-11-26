@@ -8,10 +8,15 @@ def get_historical_data(ticker: str, period="1mo", interval="1d"):
     Uses rate-limited helper to avoid 429 errors.
     """
     try:
-        data = get_ticker_history(ticker, period=period, interval=interval)
+        # Use raise_on_error=True to get actual error messages
+        data = get_ticker_history(ticker, period=period, interval=interval, raise_on_error=True)
         
         if data.empty:
-            return pd.DataFrame()
+            raise ValueError(f"Empty DataFrame returned for {ticker}")
+        
+        # Ensure we have Close column
+        if 'Close' not in data.columns:
+            raise ValueError(f"Data missing 'Close' column for {ticker}")
             
         # Add Technical Indicators
         # SMA 20
@@ -23,5 +28,5 @@ def get_historical_data(ticker: str, period="1mo", interval="1d"):
         
         return data
     except Exception as e:
-        print(f"Error fetching data for {ticker}: {e}")
-        return pd.DataFrame()
+        # Re-raise the exception so the caller can see the actual error
+        raise Exception(f"Error fetching data for {ticker}: {e}") from e

@@ -1,427 +1,163 @@
+
 import sys
 import os
+import streamlit as st
+import pandas as pd
 
-# Add the root directory (FinBot360/) to the Python path
+# Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-import yfinance as yf
-
-from data.fetch_market_data import get_stock_data
-from data.fetch_news import get_finance_news
-from data.portfolio_simulator import calculate_portfolio_value
+from ui.styles import apply_styles
+from ui.components import render_header, render_metric_card, plot_price_chart, plot_portfolio_allocation
+from data.portfolio_simulator import PortfolioManager
 from data.historical_charts import get_historical_data
-from data.parser import parse_holdings
-from utils.yfinance_helper import get_ticker_info, get_ticker_history
+from data.fetch_news import get_finance_news
+from utils.yfinance_helper import get_ticker_info, clear_cache
 
 # Page Config
 st.set_page_config(page_title="FinBot360 Pro", page_icon="📈", layout="wide")
 
-# Helper function for formatting large numbers
-def format_large_number(num):
-    if num is None:
-        return "N/A"
-    if num >= 1_000_000_000_000:
-        return f"{num / 1_000_000_000_000:.2f}T"
-    elif num >= 1_000_000_000:
-        return f"{num / 1_000_000_000:.2f}B"
-    elif num >= 1_000_000:
-        return f"{num / 1_000_000:.2f}M"
-    elif num >= 1_000:
-        return f"{num / 1_000:.2f}K"
-    else:
-        return f"{num:.2f}"
+# Apply Premium Styles
+apply_styles()
 
-# Custom CSS for Premium Design
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+def main():
+    # Sidebar
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["Market Analysis", "Portfolio Tracker"])
     
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
-    
-    /* Gradient Title */
-    .gradient-title {
-        font-weight: 800;
-        background: -webkit-linear-gradient(45deg, #FFD700, #1E90FF);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding-bottom: 20px;
-    }
-    
-    /* Card Styling with Hover Effect */
-    [data-testid="stMetric"] {
-        background-color: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        padding: 20px;
-        border-radius: 15px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    
-    [data-testid="stMetric"]:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-    
-    /* Dataframe Styling */
-    [data-testid="stDataFrame"] {
-        border-radius: 10px;
-        overflow: hidden;
-        border: 1px solid rgba(128, 128, 128, 0.2);
-    }
-    
-    /* Button Styling */
-    .stButton > button {
-        background: linear-gradient(90deg, #1E90FF, #00BFFF);
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton > button:hover {
-        opacity: 0.9;
-        transform: scale(1.02);
-        box-shadow: 0 5px 15px rgba(30, 144, 255, 0.4);
-    }
-    
-    </style>
-    """, unsafe_allow_html=True)
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔄 Clear Cache"):
+        clear_cache()
+        st.sidebar.success("Cache cleared!")
 
-# Sidebar
-st.sidebar.title("📈 FinBot360 Pro")
+    # Main Header
+    render_header()
 
-# Global Custom Heading with Gradient
-st.markdown("<h1 class='gradient-title'>📉 FinBot360 Pro</h1>", unsafe_allow_html=True)
+    if page == "Market Analysis":
+        render_market_analysis()
+    elif page == "Portfolio Tracker":
+        render_portfolio_tracker()
 
-page = st.sidebar.radio("Navigate", ["Market Analysis", "Portfolio Tracker"])
-
-if page == "Market Analysis":
-    st.subheader("Advanced Market Analysis")
-
+def render_market_analysis():
     col1, col2 = st.columns([3, 1])
-
     with col1:
-        ticker = st.text_input("Enter Ticker (Stock or Crypto, e.g., AAPL, BTC-USD):", "AAPL").upper()
+        ticker = st.text_input("Search Ticker", "AAPL", help="Enter stock or crypto symbol (e.g., AAPL, BTC-USD)").upper()
     
-    with col2:
-        if st.button("🔄 Force Refresh", help="Clear cache and retry fetching data"):
-            from utils.yfinance_helper import clear_cache
-            clear_cache()
-            st.rerun()
-        
     if ticker:
         try:
-            # Fetch Fundamental Data with rate limiting and error handling
-            info = None
-            has_price = False
-            
-            with st.spinner(f"Fetching data for {ticker}..."):
+            with st.spinner(f"Analyzing {ticker}..."):
                 info = get_ticker_info(ticker)
-            
-            # Check if info is empty or invalid - check multiple price keys
-            price_keys = ['currentPrice', 'regularMarketPrice', 'previousClose', 'regularMarketPreviousClose', 'ask', 'bid']
-            has_price = info and any(info.get(key) is not None for key in price_keys)
-            
-            if not info:
-                # Try to get at least history data to show something
-                st.info("ℹ️ Trying to fetch historical data...")
-                hist = None
-                try:
-                    from utils.yfinance_helper import get_ticker_history
-                    hist = get_ticker_history(ticker, period="5d", interval="1d")
-                except Exception as e1:
-                    st.warning(f"First attempt failed: {str(e1)[:100]}")
-                    # Try direct yfinance as last resort
-                    try:
-                        import yfinance as yf
-                        st.info("Trying direct yfinance download...")
-                        hist = yf.download(ticker, period="5d", interval="1d", progress=False)
-                        if not hist.empty and len(hist.columns) > 0:
-                            # Handle MultiIndex columns from download
-                            if isinstance(hist.columns, pd.MultiIndex):
-                                hist = hist.droplevel(0, axis=1)
-                    except Exception as e2:
-                        st.error(f"All methods failed. Last error: {str(e2)[:150]}")
                 
-                if hist is not None and not hist.empty:
-                    try:
-                        # Create minimal info from history
-                        latest_price = float(hist['Close'].iloc[-1])
-                        prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else latest_price
-                        info = {
-                            'currentPrice': latest_price,
-                            'regularMarketPrice': latest_price,
-                            'previousClose': prev_close,
-                            'symbol': ticker
-                        }
-                        has_price = True
-                        st.success("✅ Retrieved price data from historical records")
-                    except Exception as e:
-                        st.error(f"Error processing data: {str(e)[:100]}")
-                else:
-                    # Check if we have any cached data to show (even if expired)
-                    from utils.yfinance_helper import get_cached_data
-                    cached_info = get_cached_data(ticker, "info", allow_expired=True)
-                    if cached_info:
-                        st.warning("⚠️ Using cached data (may be outdated)")
-                        info = cached_info
-                        has_price = any(info.get(key) is not None for key in price_keys)
-                    else:
-                        st.warning(f"⚠️ Could not fetch data for '{ticker}'. This may be due to rate limiting.")
+                if info:
+                    # Top Metrics Row
+                    m1, m2, m3, m4 = st.columns(4)
                     
-                    st.info("""
-                    **💡 Troubleshooting Tips:**
-                    - Click "🔄 Force Refresh" button above to clear cache and retry
-                    - Wait 3-5 minutes before trying again (Yahoo Finance rate limits)
-                    - Try a different ticker symbol
-                    - Charts below may still work with historical data
-                    """)
-            elif not has_price:
-                # Info exists but no price - try to get from history
-                st.info("ℹ️ Fetching price from historical data...")
-                try:
-                    from utils.yfinance_helper import get_ticker_history
-                    hist = get_ticker_history(ticker, period="1d", interval="1m")
-                    if not hist.empty:
-                        latest_price = float(hist['Close'].iloc[-1])
-                        prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else latest_price
-                        # Update info with price from history
-                        info['currentPrice'] = latest_price
-                        info['regularMarketPrice'] = latest_price
-                        info['previousClose'] = prev_close
-                        has_price = True
-                except Exception:
-                    pass
-                
-                if not has_price:
-                    st.warning(f"⚠️ Could not fetch price data for '{ticker}'. Trying to show charts anyway...")
-            
-            # Display Key Metrics if we have price data
-            if info and has_price:
-                # Display Key Metrics
-                m1, m2, m3, m4 = st.columns(4)
-                current_price = info.get('currentPrice') or info.get('regularMarketPrice')
-                prev_close = info.get('previousClose')
-                
-                if current_price and prev_close:
-                    delta = current_price - prev_close
-                    m1.metric("Price", f"${current_price:,.2f}", f"{delta:.2f}")
-                
-                market_cap = info.get('marketCap')
-                m2.metric("Market Cap", f"${format_large_number(market_cap)}")
-                
-                pe_ratio = info.get('trailingPE')
-                m3.metric("P/E Ratio", f"{pe_ratio:.2f}" if pe_ratio else "N/A")
-                
-                high_52 = info.get('fiftyTwoWeekHigh')
-                m4.metric("52W High", f"${high_52:,.2f}" if high_52 else "N/A")
-            elif info:
-                # Show basic info even without price
-                st.info(f"📊 Found data for {ticker}, but price information is limited. Showing charts below...")
+                    price = info.get('currentPrice') or info.get('regularMarketPrice')
+                    prev = info.get('previousClose')
+                    
+                    if price and prev:
+                        delta = price - prev
+                        delta_pct = (delta / prev) * 100
+                        with m1:
+                            render_metric_card("Price", f"${price:,.2f}", f"{delta:+.2f} ({delta_pct:+.2f}%)")
+                    
+                    with m2:
+                        mkt_cap = info.get('marketCap')
+                        val = f"${mkt_cap/1e9:.2f}B" if mkt_cap else "N/A"
+                        render_metric_card("Market Cap", val)
+                        
+                    with m3:
+                        pe = info.get('trailingPE')
+                        render_metric_card("P/E Ratio", f"{pe:.2f}" if pe else "N/A")
+                        
+                    with m4:
+                        vol = info.get('volume')
+                        val = f"{vol/1e6:.1f}M" if vol else "N/A"
+                        render_metric_card("Volume", val)
 
-            # Technical Analysis Tabs (always show)
-            tab1, tab2 = st.tabs(["Technical Chart", "News"])
-            
-            with tab1:
-                period = st.select_slider("Time Period:", options=["1mo", "3mo", "6mo", "1y", "2y", "5y"], value="6mo")
-                
-                # Always try to fetch historical data, even if info failed
-                hist_data = pd.DataFrame()
-                with st.spinner(f"Loading {period} historical data..."):
-                    try:
+                    # Tabs for Chart and News
+                    tab1, tab2 = st.tabs(["Technical Chart", "Latest News"])
+                    
+                    with tab1:
+                        period = st.select_slider("Period", options=["1mo", "3mo", "6mo", "1y", "5y"], value="6mo")
                         hist_data = get_historical_data(ticker, period=period)
-                    except Exception as e:
-                        st.warning(f"First attempt failed: {str(e)[:100]}")
-                
-                # If still empty, try a different approach
-                if hist_data.empty:
-                    st.info("Trying alternative data source...")
-                    try:
-                        from utils.yfinance_helper import get_ticker_history
-                        hist_data = get_ticker_history(ticker, period=period, interval="1d")
-                        if not hist_data.empty:
-                            # Add technical indicators
-                            import pandas_ta as ta
-                            hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
-                            hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
-                            hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
-                    except Exception as e1:
-                        st.warning(f"Helper method failed: {str(e1)[:100]}")
-                        # Last resort: direct yfinance download
-                        try:
-                            import yfinance as yf
-                            st.info("Trying direct yfinance download as last resort...")
-                            hist_data = yf.download(ticker, period=period, interval="1d", progress=False)
-                            if not hist_data.empty:
-                                # Handle MultiIndex columns
-                                if isinstance(hist_data.columns, pd.MultiIndex):
-                                    hist_data = hist_data.droplevel(0, axis=1)
-                                # Add technical indicators
-                                import pandas_ta as ta
-                                hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
-                                hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
-                                hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
-                        except Exception as e2:
-                            st.error(f"All methods failed. Error: {str(e2)[:150]}")
-                            # Try to show cached historical data if available
-                            try:
-                                from utils.yfinance_helper import get_cached_data, get_all_cache_keys
-                                import time
-                                # Try different cache keys for history
-                                for cache_type in [f"{ticker}_{period}_1d", f"{ticker}_5d_1d", f"{ticker}_1mo_1d"]:
-                                    cached_hist = get_cached_data(ticker, cache_type, allow_expired=True)
-                                    if cached_hist is not None and not cached_hist.empty:
-                                        st.info("📦 Loading from cache...")
-                                        hist_data = cached_hist.copy()
-                                        # Add indicators if not present
-                                        if 'SMA_20' not in hist_data.columns:
-                                            import pandas_ta as ta
-                                            hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
-                                            hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
-                                            hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
-                                        st.success("✅ Showing cached historical data")
-                                        break
-                            except Exception as cache_error:
-                                pass
-                            
-                            if hist_data.empty:
-                                st.info("💡 **Tip**: Wait 3-5 minutes and click '🔄 Force Refresh' button. Yahoo Finance may be rate limiting requests.")
-                    
-                    if not hist_data.empty:
-                        # Handle MultiIndex columns (common with yfinance)
-                        if isinstance(hist_data.columns, pd.MultiIndex):
-                            hist_data.columns = hist_data.columns.get_level_values(0)
+                        plot_price_chart(hist_data, ticker)
                         
-                        # Ensure Close column exists and technical indicators exist
-                        if 'Close' not in hist_data.columns:
-                            st.error("❌ Data missing 'Close' column. Cannot display charts.")
+                    with tab2:
+                        news = get_finance_news(ticker)
+                        if news:
+                            for title, link in news:
+                                st.markdown(f"""
+                                <div class="glass-card" style="margin-bottom: 10px; padding: 15px;">
+                                    <a href="{link}" target="_blank" style="text-decoration: none; color: white; font-weight: 500;">
+                                        📰 {title}
+                                    </a>
+                                </div>
+                                """, unsafe_allow_html=True)
                         else:
-                            try:
-                                import pandas_ta as ta
-                                if 'SMA_20' not in hist_data.columns:
-                                    hist_data['SMA_20'] = ta.sma(hist_data['Close'], length=20)
-                                if 'SMA_50' not in hist_data.columns:
-                                    hist_data['SMA_50'] = ta.sma(hist_data['Close'], length=50)
-                                if 'RSI' not in hist_data.columns:
-                                    hist_data['RSI'] = ta.rsi(hist_data['Close'], length=14)
-                            except Exception as e:
-                                st.warning(f"Could not calculate some technical indicators: {e}")
+                            st.info("No news found.")
+                else:
+                    st.warning(f"No data available for {ticker}. Please check the ticker symbol.")
 
-                        # Controls for technical indicators
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            show_sma_20 = st.checkbox("Show SMA 20", help="Simple Moving Average (20 days). Useful for short-term trends.")
-                        with c2:
-                            show_sma_50 = st.checkbox("Show SMA 50", help="Simple Moving Average (50 days). Useful for medium-term trends.")
-                        with c3:
-                            show_rsi = st.checkbox("Show RSI", help="Relative Strength Index. >70 is Overbought, <30 is Oversold.")
-                        
-                        # Main Price Chart with SMA (only if Close column exists)
-                        if 'Close' in hist_data.columns:
-                            fig = go.Figure()
-                            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price', line=dict(width=2)))
-                            
-                            if show_sma_20 and 'SMA_20' in hist_data.columns:
-                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_20'], mode='lines', name='SMA 20', line=dict(dash='dash')))
-                            if show_sma_50 and 'SMA_50' in hist_data.columns:
-                                fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA_50'], mode='lines', name='SMA 50', line=dict(dash='dash')))
-                            
-                            fig.update_layout(
-                                title=f"{ticker} Price Analysis",
-                                xaxis_title="Date",
-                                yaxis_title="Price",
-                                hovermode="x unified"
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.error("❌ Cannot display chart: Missing 'Close' price data.")
-                        
-                        # RSI Chart
-                        if show_rsi and 'RSI' in hist_data.columns:
-                            fig_rsi = go.Figure()
-                            fig_rsi.add_trace(go.Scatter(x=hist_data.index, y=hist_data['RSI'], mode='lines', name='RSI', line=dict(color='#A371F7')))
-                            fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
-                            fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
-                            fig_rsi.update_layout(
-                                title="Relative Strength Index (RSI)",
-                                yaxis_title="RSI",
-                                height=300,
-                                hovermode="x unified"
-                            )
-                            st.plotly_chart(fig_rsi, use_container_width=True)
-                    else:
-                        st.warning("No historical data available.")
-
-                with tab2:
-                    st.subheader(f"🗞️ Latest News for {ticker}")
-                    news = get_finance_news(ticker)
-                    if news:
-                        for title, link in news:
-                            st.markdown(f"• [{title}]({link})")
-                    else:
-                        st.info("No recent news found.")
         except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "Too Many Requests" in error_msg:
-                st.error("🚨 Rate limit exceeded. Please wait a moment and try again. The app is caching data to reduce API calls.")
-                st.info("💡 **Tip**: Data is cached for 60 seconds. If you just searched this ticker, wait a moment before searching again.")
-            else:
-                st.error(f"🚨 Error fetching data: {e}")
+            st.error(f"Error analyzing {ticker}: {e}")
 
-elif page == "Portfolio Tracker":
-    st.title("💼 Portfolio Tracker & Growth")
-
-    st.info("💡 Tip: Enter buy price to track growth! Format: `TICKER=QTY@PRICE` (e.g., `AAPL=10@150`)")
-    portfolio_input = st.text_area("Holdings:", "AAPL=10@150, TSLA=5@200, BTC-USD=0.5@30000")
+def render_portfolio_tracker():
+    st.subheader("Your Portfolio")
     
-    if st.button("Analyze Portfolio"):
-        holdings = parse_holdings(portfolio_input)
-        if holdings:
-            try:
-                with st.spinner("Analyzing portfolio..."):
-                    portfolio_data, summary = calculate_portfolio_value(holdings)
-                
-                # Summary Metrics
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total Value", f"${summary['total_value']:,.2f}", f"{summary['total_daily_change']:,.2f} (Day)")
-                
-                c2.metric("Total Cost", f"${summary['total_cost']:,.2f}")
-                c3.metric("Total Growth", f"${summary['total_growth_val']:,.2f}", f"{summary['total_growth_pct']:.2f}%")
+    # Initialize session state for portfolio if not exists
+    if 'portfolio_df' not in st.session_state:
+        st.session_state.portfolio_df = PortfolioManager.get_default_portfolio()
 
-                st.divider()
-                
-                # Detailed Breakdown
-                st.subheader("📊 Asset Breakdown")
-                df = pd.DataFrame(portfolio_data)
-                st.dataframe(df, use_container_width=True)
-                
-                # Charts
-                if not df.empty:
-                    col_chart1, col_chart2 = st.columns(2)
-                    
-                    with col_chart1:
-                        fig_alloc = px.pie(df, values='Market Value', names='Ticker', title='Portfolio Allocation')
-                        st.plotly_chart(fig_alloc, use_container_width=True)
-                        
-                    with col_chart2:
-                        # Filter for items with growth data
-                        growth_df = df[df['Total Return ($)'] != "N/A"]
-                        if not growth_df.empty:
-                            fig_growth = px.bar(growth_df, x='Ticker', y='Total Return ($)', title='Profit/Loss by Asset', color='Total Return ($)', color_continuous_scale=['#FF6B6B', '#51CF66'])
-                            st.plotly_chart(fig_growth, use_container_width=True)
+    # Editable Data Table
+    edited_df = st.data_editor(
+        st.session_state.portfolio_df,
+        num_rows="dynamic",
+        column_config={
+            "Ticker": st.column_config.TextColumn("Ticker", required=True),
+            "Quantity": st.column_config.NumberColumn("Quantity", min_value=0, required=True),
+            "Avg Cost": st.column_config.NumberColumn("Avg Cost ($)", min_value=0, required=True),
+        },
+        use_container_width=True
+    )
+    
+    # Update session state
+    st.session_state.portfolio_df = edited_df
+
+    if st.button("Analyze Portfolio", type="primary"):
+        if not edited_df.empty:
+            pm = PortfolioManager()
+            with st.spinner("Calculating portfolio performance..."):
+                results, summary = pm.calculate_portfolio(edited_df)
             
-            except Exception as e:
-                st.error(f"🚨 Error analyzing portfolio: {e}")
-        else:
-            st.warning("⚠️ Please enter valid holdings.")
+            # Summary Cards
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                render_metric_card("Total Value", f"${summary['total_value']:,.2f}")
+            with c2:
+                render_metric_card("Total Cost", f"${summary['total_cost']:,.2f}")
+            with c3:
+                render_metric_card("Total Return", f"${summary['total_return']:,.2f}", f"{summary['total_return_pct']:+.2f}%")
+            with c4:
+                render_metric_card("Daily Change", f"${summary['daily_change']:,.2f}")
+
+            st.divider()
+            
+            # Charts
+            col_chart1, col_chart2 = st.columns(2)
+            
+            results_df = pd.DataFrame(results)
+            
+            with col_chart1:
+                plot_portfolio_allocation(results_df)
+                
+            with col_chart2:
+                if not results_df.empty:
+                    st.dataframe(
+                        results_df[['Ticker', 'Current Price', 'Market Value', 'Total Return (%)']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+if __name__ == "__main__":
+    main()

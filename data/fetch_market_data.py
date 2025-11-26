@@ -1,20 +1,12 @@
-import yfinance as yf
+
+from utils.yfinance_helper import get_ticker_history
 
 def get_stock_data(ticker: str, period='1d', interval='5m'):
     """
     Fetches historical market data for a given stock ticker.
-
-    Parameters:
-    ticker (str): The stock ticker symbol.
-    period (str): The period of data to fetch (default is '1d').
-    interval (str): The interval of data to fetch (default is '1m').
-
-    Returns:
-    DataFrame: A DataFrame containing the historical market data.
+    Uses the robust helper with rate limiting and caching.
     """
-    # Fetch the data using yfinance
-    data = yf.download(ticker, period=period, interval=interval)
-    return data.tail(10)  # Return the last 10 rows
-    
+    return get_ticker_history(ticker, period=period, interval=interval)
+
 if __name__ == "__main__":
     print(get_stock_data('AAPL'))

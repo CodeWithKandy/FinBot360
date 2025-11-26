@@ -1,73 +1,103 @@
+
 import pandas as pd
-from utils.yfinance_helper import get_ticker_history
 import time
+from utils.yfinance_helper import get_ticker_history
+import logging
 
-def calculate_portfolio_value(holdings):
-    portfolio = []
-    total_value = 0
-    total_cost = 0
-    total_daily_change = 0
+logger = logging.getLogger(__name__)
 
-    for item in holdings:
-        ticker = item['ticker']
-        shares = item['quantity']
-        buy_price = item['buy_price']
-        
-        try:
-            # Use rate-limited helper to avoid 429 errors
-            hist = get_ticker_history(ticker, period="5d", interval="1d")
+class PortfolioManager:
+    def __init__(self):
+        pass
 
-            if hist.empty or "Close" not in hist:
-                raise ValueError("No closing data.")
+    def calculate_portfolio(self, holdings_df):
+        """
+        Calculate portfolio value based on a DataFrame of holdings.
+        Expected columns: 'Ticker', 'Quantity', 'Avg Cost'
+        """
+        if holdings_df.empty:
+            return [], {}
+
+        portfolio_data = []
+        total_value = 0.0
+        total_cost = 0.0
+        total_daily_change = 0.0
+
+        # Iterate through unique tickers
+        unique_holdings = holdings_df.groupby('Ticker').agg({
+            'Quantity': 'sum',
+            'Avg Cost': 'mean' # Simplified: weighted average would be better but keeping it simple for now
+        }).reset_index()
+
+        for _, row in unique_holdings.iterrows():
+            ticker = row['Ticker']
+            shares = float(row['Quantity'])
+            avg_cost = float(row['Avg Cost'])
             
-            # Add small delay between multiple tickers to avoid rate limiting
-            time.sleep(0.5)
+            try:
+                # Fetch data
+                hist = get_ticker_history(ticker, period="5d", interval="1d")
+                
+                if hist.empty or "Close" not in hist.columns:
+                    raise ValueError("No price data found")
 
-            latest_price = float(hist["Close"].iloc[-1])
-            prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else latest_price
-            
-            current_value = round(latest_price * shares, 2)
-            daily_change_pct = ((latest_price - prev_close) / prev_close) * 100
-            daily_change_val = (latest_price - prev_close) * shares
-            
-            # Growth Calculation
-            growth_val = 0
-            growth_pct = 0
-            cost_basis = 0
-            
-            if buy_price:
-                cost_basis = buy_price * shares
-                growth_val = current_value - cost_basis
-                growth_pct = ((latest_price - buy_price) / buy_price) * 100
-                total_cost += cost_basis
+                # Calculate metrics
+                current_price = float(hist["Close"].iloc[-1])
+                prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
+                
+                market_value = current_price * shares
+                daily_change_pct = ((current_price - prev_close) / prev_close) * 100
+                daily_change_val = (current_price - prev_close) * shares
+                
+                total_return_val = market_value - (avg_cost * shares)
+                total_return_pct = ((current_price - avg_cost) / avg_cost) * 100 if avg_cost > 0 else 0
+                
+                portfolio_data.append({
+                    "Ticker": ticker,
+                    "Quantity": shares,
+                    "Avg Cost": avg_cost,
+                    "Current Price": current_price,
+                    "Market Value": market_value,
+                    "Daily Change (%)": daily_change_pct,
+                    "Total Return ($)": total_return_val,
+                    "Total Return (%)": total_return_pct
+                })
+                
+                total_value += market_value
+                total_cost += (avg_cost * shares)
+                total_daily_change += daily_change_val
+                
+                # Rate limit politeness
+                time.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Error processing {ticker}: {e}")
+                portfolio_data.append({
+                    "Ticker": ticker,
+                    "Quantity": shares,
+                    "Avg Cost": avg_cost,
+                    "Current Price": 0.0,
+                    "Market Value": 0.0,
+                    "Daily Change (%)": 0.0,
+                    "Total Return ($)": 0.0,
+                    "Total Return (%)": 0.0,
+                    "Error": str(e)
+                })
 
-            portfolio.append({
-                "Ticker": ticker,
-                "Shares": shares,
-                "Avg Cost": buy_price if buy_price else "N/A",
-                "Current Price": round(latest_price, 2),
-                "Market Value": current_value,
-                "Daily Change (%)": round(daily_change_pct, 2),
-                "Total Return ($)": round(growth_val, 2) if buy_price else "N/A",
-                "Total Return (%)": round(growth_pct, 2) if buy_price else "N/A"
-            })
-            
-            total_value += current_value
-            total_daily_change += daily_change_val
-            
-        except Exception as e:
-            portfolio.append({
-                "Ticker": ticker,
-                "Shares": shares,
-                "Error": str(e)
-            })
+        summary = {
+            "total_value": total_value,
+            "total_cost": total_cost,
+            "total_return": total_value - total_cost,
+            "total_return_pct": ((total_value - total_cost) / total_cost * 100) if total_cost > 0 else 0,
+            "daily_change": total_daily_change
+        }
 
-    summary = {
-        "total_value": round(total_value, 2),
-        "total_cost": round(total_cost, 2),
-        "total_growth_val": round(total_value - total_cost, 2) if total_cost > 0 else 0,
-        "total_growth_pct": round(((total_value - total_cost) / total_cost) * 100, 2) if total_cost > 0 else 0,
-        "total_daily_change": round(total_daily_change, 2)
-    }
+        return portfolio_data, summary
 
-    return portfolio, summary
+    @staticmethod
+    def get_default_portfolio():
+        return pd.DataFrame([
+            {"Ticker": "AAPL", "Quantity": 10.0, "Avg Cost": 150.0},
+            {"Ticker": "TSLA", "Quantity": 5.0, "Avg Cost": 200.0},
+            {"Ticker": "BTC-USD", "Quantity": 0.5, "Avg Cost": 30000.0}
+        ])
